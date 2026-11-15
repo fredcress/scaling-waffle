@@ -147,7 +147,10 @@ class AppTest(unittest.TestCase):
         b1, b2 = items["burst1.jpg"], items["burst2.jpg"]
         self.assertIsNotNone(b1.get("b"))
         self.assertEqual(b1["b"], b2.get("b"))
-        self.assertIsNone(sharp.get("b"))
+        # The sharp picture and its blurred copy are the same scene shot at the same moment:
+        # that is a burst too, and the sharpness score tells the two apart.
+        self.assertEqual(sharp.get("b"), blurry.get("b"))
+        self.assertIsNone(flat.get("b"))
 
         r = self.client.post("/api/rate-bulk", json={"user": "Husband", "ids": [b1["id"], b2["id"]], "score": 1})
         self.assertEqual(r.json()["rated"], 2)
