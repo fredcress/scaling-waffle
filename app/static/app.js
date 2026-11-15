@@ -472,7 +472,7 @@ function renderExport() {
   $('#ex-preview').disabled = !sel.length;
   $('#ex-hint').textContent = S.cfg.immich
     ? `Uploads the originals straight from the NAS into the Immich album “${S.cfg.immich_album}”, with the average score as the star rating and super-stars as favourites. Safe to run again: nothing is uploaded twice.`
-    : 'Immich is not connected yet: set IMMICH_URL and IMMICH_API_KEY in the compose file to enable this button.';
+    : 'Immich is not connected yet: set IMMICH_URL and IMMICH_API_KEY in the stack's .env to enable this button.';
 
   const st = S.status;
   const bits = [`${total} photos and videos ready to rate`];

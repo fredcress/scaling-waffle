@@ -21,8 +21,8 @@ super-star the best, and send the winners to Immich.
    (GitHub → Packages → package settings) or run `docker login ghcr.io` on the NAS with a token
    that has `read:packages`.
 3. Create a dataset/folder for the app data, e.g. `/mnt/tank/apps/wedding-triage`.
-4. In Dockge, create a stack from [`compose.yaml`](compose.yaml): set `USERS`, `TZ`
-   and the two volume paths.
+4. In Dockge, create a stack from [`compose.yaml`](compose.yaml) and put your own values in its `.env`
+   (see [`.env.example`](.env.example)). Without a `.env` the defaults in the compose file apply.
 5. Open `http://<nas>:8484`. The first start scans the folder and builds previews in the background;
    photos become available as they are ready.
 
@@ -40,7 +40,7 @@ While sorting you don't see the other person's rating; Browse and Results show b
 
 ## Export to Immich
 
-Set `IMMICH_URL` and `IMMICH_API_KEY` in the compose file. In Immich, create the key under
+Set `IMMICH_URL` and `IMMICH_API_KEY` in the stack's `.env`. In Immich, create the key under
 *Account settings → API keys* with these permissions: `asset.upload`, `asset.update`, `album.read`,
 `album.create`, `albumAsset.create`.
 
@@ -64,7 +64,8 @@ Alternative: set `EXPORT_DIR` (and mount it) to get a **Copy to export folder** 
 | `VIDEO_PREVIEWS` | `1` | Make 720p H.264 copies of videos for playback |
 | `IMMICH_URL`, `IMMICH_API_KEY`, `IMMICH_ALBUM` | | Immich export |
 | `EXPORT_DIR` | | Folder export |
-| `TZ` | | Timezone for video timestamps |
+| `TZ` | `Europe/Paris` | Timezone of the wedding. Photos carry their own local time; videos only store UTC and need this |
+| `PHOTOS_PATH`, `DATA_PATH`, `PORT` | | Compose-only: host folders and port |
 
 ## Development
 
