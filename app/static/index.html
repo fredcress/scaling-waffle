@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14110f">
+<title>Wedding photo triage</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="bar">
+  <nav id="tabs">
+    <button data-view="sort" class="on">Sort</button>
+    <button data-view="browse">Browse</button>
+    <button data-view="export">Results</button>
+  </nav>
+  <div id="progress" title="Your progress">
+    <div id="progress-text"></div>
+    <div class="track"><div id="progress-fill"></div></div>
+  </div>
+  <button id="who" title="Switch person"></button>
+</header>
+
+<div id="banner" hidden></div>
+
+<main>
+  <section id="view-sort" class="view">
+    <div class="toolbar">
+      <label>Guest <select id="sort-sender"></select></label>
+      <label>Order
+        <select id="sort-order">
+          <option value="guest">Guest by guest</option>
+          <option value="time">By time taken</option>
+          <option value="shuffle">Shuffled</option>
+        </select>
+      </label>
+    </div>
+    <div id="viewer-home"></div>
+  </section>
+
+  <section id="view-browse" class="view" hidden>
+    <div class="toolbar">
+      <label>Guest <select id="browse-sender"></select></label>
+      <label>Show
+        <select id="browse-filter">
+          <option value="all">Everything</option>
+          <option value="unrated">Not rated by me</option>
+          <option value="rated">Rated by me</option>
+          <option value="star">Super-starred</option>
+          <option value="top">Top picks (average 4+)</option>
+          <option value="agree">Both rated 4+</option>
+          <option value="disagree">We disagree (2+ apart)</option>
+          <option value="video">Videos</option>
+        </select>
+      </label>
+      <label>Sort
+        <select id="browse-sort">
+          <option value="score">Best first</option>
+          <option value="guest">Guest by guest</option>
+          <option value="time">By time taken</option>
+        </select>
+      </label>
+      <span id="browse-count" class="muted"></span>
+    </div>
+    <div id="grid"></div>
+    <div id="grid-more"></div>
+  </section>
+
+  <section id="view-export" class="view" hidden>
+    <div class="cards" id="stats"></div>
+
+    <div class="panel">
+      <h2>Send the best ones to Immich</h2>
+      <div class="rule">
+        <label>Average score at least
+          <select id="ex-min">
+            <option>5</option><option>4.5</option><option selected>4</option><option>3.5</option><option>3</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" id="ex-both"> only if we both rated it</label>
+        <label class="check"><input type="checkbox" id="ex-star" checked> always include super-stars</label>
+      </div>
+      <p id="ex-summary" class="big"></p>
+      <div class="actions">
+        <button id="ex-immich" class="primary">Send to Immich</button>
+        <button id="ex-folder">Copy to export folder</button>
+        <button id="ex-preview">Look at the selection</button>
+      </div>
+      <p id="ex-hint" class="muted"></p>
+      <div id="ex-job" hidden>
+        <div class="track wide"><div id="ex-job-fill"></div></div>
+        <p id="ex-job-text"></p>
+        <ul id="ex-job-errors"></ul>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Library</h2>
+      <p id="lib-text"></p>
+      <div class="actions">
+        <button id="rescan">Rescan the photo folder</button>
+        <button id="show-errors" hidden>Show unreadable files</button>
+      </div>
+      <ul id="lib-errors"></ul>
+    </div>
+  </section>
+</main>
+
+<section id="viewer" hidden>
+  <button id="v-close" title="Close (Esc)" hidden>✕</button>
+  <div id="stage">
+    <img id="v-img" alt="" hidden>
+    <video id="v-vid" controls playsinline loop hidden></video>
+    <div id="v-empty" hidden></div>
+  </div>
+  <div id="v-meta">
+    <div><strong id="v-sender"></strong> <span id="v-info" class="muted"></span></div>
+    <div id="v-count" class="muted"></div>
+  </div>
+  <div id="v-others" class="muted"></div>
+  <div id="controls">
+    <button id="v-back" class="nav" title="Back (←)">‹</button>
+    <div id="scores">
+      <button data-score="1">1</button>
+      <button data-score="2">2</button>
+      <button data-score="3">3</button>
+      <button data-score="4">4</button>
+      <button data-score="5">5</button>
+      <button id="v-star" title="Super-star (S)">★</button>
+    </div>
+    <button id="v-next" class="nav" title="Skip (→)">›</button>
+  </div>
+  <div id="keys" class="muted">1–5 rate · S super-star · ← back · → skip · 0 clear · space play/pause</div>
+</section>
+
+<div id="picker" hidden>
+  <div class="picker-box">
+    <h1>Who's sorting?</h1>
+    <div id="picker-users"></div>
+  </div>
+</div>
+
+<div id="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
