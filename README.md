@@ -9,16 +9,19 @@ super-star the best, and send the winners to Immich.
   Files directly in the root show up as "Unknown".
 - HEIC photos and iPhone videos are converted to previews once, so browsing is fast.
 - Hidden automatically: exact duplicates, the video half of Live Photos, RAW files.
+- Flagged, never hidden: photos that look blurry, very dark, blown out or empty ("Possibly junk" in Browse,
+  with a button to rate the whole pile as 1), and bursts of look-alike shots (shown as a strip while sorting;
+  `B` keeps the one on screen and rates the rest 1).
 
 ## Install (TrueNAS + Dockge)
 
-1. Push this repository to GitHub. The `build` workflow tests it and publishes
-   `ghcr.io/<owner>/<repo>:latest`.
+1. Every push to `main` runs the `build` workflow, which tests the app and publishes
+   `ghcr.io/fredcress/scaling-waffle:latest`.
 2. If the repository is private, the image is too: either make the package public
    (GitHub → Packages → package settings) or run `docker login ghcr.io` on the NAS with a token
    that has `read:packages`.
 3. Create a dataset/folder for the app data, e.g. `/mnt/tank/apps/wedding-triage`.
-4. In Dockge, create a stack from [`compose.yaml`](compose.yaml): set the image name, `USERS`, `TZ`
+4. In Dockge, create a stack from [`compose.yaml`](compose.yaml): set `USERS`, `TZ`
    and the two volume paths.
 5. Open `http://<nas>:8484`. The first start scans the folder and builds previews in the background;
    photos become available as they are ready.
@@ -55,6 +58,9 @@ Alternative: set `EXPORT_DIR` (and mount it) to get a **Copy to export folder** 
 | `USERS` | `Husband,Wife` | Names on the "who's sorting?" screen |
 | `EXCLUDE` | | Comma-separated folders/globs to skip, e.g. `Uncle Bob/*` |
 | `WORKERS` | `2` | Parallel thumbnail jobs |
+| `BLUR_BELOW` | `45` | Sharpness score under which a photo is flagged blurry. Use Browse → "Blurriest first" to see where the line should sit |
+| `DARK_BELOW`, `BRIGHT_ABOVE`, `FLAT_BELOW` | `28`, `235`, `12` | Brightness / contrast limits for the other flags |
+| `BURST_SECONDS`, `BURST_DISTANCE` | `10`, `12` | How close in time and how alike shots must be to form a burst |
 | `VIDEO_PREVIEWS` | `1` | Make 720p H.264 copies of videos for playback |
 | `IMMICH_URL`, `IMMICH_API_KEY`, `IMMICH_ALBUM` | | Immich export |
 | `EXPORT_DIR` | | Folder export |

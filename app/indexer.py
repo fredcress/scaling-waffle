@@ -107,7 +107,7 @@ def scan() -> dict:
                 seen.add(rel)
                 if row:  # same path, different content
                     c.execute(
-                        "UPDATE media SET size=?, mtime=?, fp=?, state='new', error=NULL, vprev=0, hidden=NULL WHERE id=?",
+                        "UPDATE media SET size=?, mtime=?, fp=?, state='new', error=NULL, vprev=0, hidden=NULL, sharp=NULL, phash=NULL WHERE id=?",
                         (st.st_size, st.st_mtime, fp, row["id"]),
                     )
                 else:
@@ -297,6 +297,107 @@ def transcode_video(src: str, media_id: int) -> None:
     os.replace(tmp, dst)
 
 
+# ---------------------------------------------------------------- quality + bursts
+
+def analyse_image(media_id: int) -> dict:
+    """Cheap image statistics, computed from the cached preview (never the original)."""
+    Image, _ = _pil()
+    from PIL import ImageFilter, ImageStat
+
+    with Image.open(preview_path(media_id)) as im:
+        im.draft("L", (800, 800))
+        g = im.convert("L")
+    g.thumbnail((640, 640))
+    st = ImageStat.Stat(g)
+
+    # Sharpness = variance of the Laplacian, taken on the sharpest of 16 tiles so that a
+    # portrait with a crisp subject and a soft background still counts as sharp.
+    lap = g.filter(ImageFilter.Kernel((3, 3), (0, 1, 0, 1, -4, 1, 0, 1, 0), scale=1, offset=128))
+    w, h = lap.size
+    sharp = 0.0
+    for ty in range(4):
+        for tx in range(4):
+            box = (max(1, tx * w // 4), max(1, ty * h // 4), min(w - 1, (tx + 1) * w // 4), min(h - 1, (ty + 1) * h // 4))
+            if box[2] - box[0] >= 8 and box[3] - box[1] >= 8:
+                sharp = max(sharp, ImageStat.Stat(lap.crop(box)).var[0])
+
+    # dHash: 8x8 "is this pixel brighter than its right neighbour" bits.
+    px = g.resize((9, 8), Image.LANCZOS).tobytes()
+    bits = 0
+    for y in range(8):
+        for x in range(8):
+            bits = (bits << 1) | (px[y * 9 + x] > px[y * 9 + x + 1])
+    return {"sharp": sharp, "lum": st.mean[0], "contrast": st.stddev[0], "phash": f"{bits:016x}"}
+
+
+def quality_flags(sharp, lum, contrast) -> str:
+    """b = blurry, d = very dark, o = overexposed, f = flat / no detail."""
+    if sharp is None or lum is None or contrast is None:
+        return ""
+    flags = ""
+    if sharp < config.BLUR_BELOW:
+        flags += "b"
+    if lum < config.DARK_BELOW:
+        flags += "d"
+    if lum > config.BRIGHT_ABOVE:
+        flags += "o"
+    if contrast < config.FLAT_BELOW:
+        flags += "f"
+    return flags
+
+
+def analyse_one(row) -> None:
+    c = db.conn()
+    try:
+        m = analyse_image(row["id"])
+        c.execute("UPDATE media SET sharp=?, lum=?, contrast=?, phash=? WHERE id=?",
+                  (m["sharp"], m["lum"], m["contrast"], m["phash"], row["id"]))
+    except Exception as e:
+        # -1 = "tried, could not tell": not flagged, not retried on every start
+        c.execute("UPDATE media SET sharp=-1, error=? WHERE id=?", (f"analysis: {e}"[:400], row["id"]))
+    finally:
+        status["done"] += 1
+
+
+def hamming(a: str, b: str) -> int:
+    return (int(a, 16) ^ int(b, 16)).bit_count()
+
+
+def _gap_seconds(a: str | None, b: str | None) -> float:
+    try:
+        return abs((datetime.fromisoformat(b) - datetime.fromisoformat(a)).total_seconds())
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def assign_bursts() -> int:
+    """Group look-alike shots a guest took within a few seconds of each other."""
+    c = db.conn()
+    rows = c.execute(
+        "SELECT id, sender, taken_at, phash FROM media WHERE kind='image' AND state='ready' "
+        "AND hidden IS NULL AND phash IS NOT NULL ORDER BY sender, taken_at, id").fetchall()
+    groups: list[list[int]] = []
+    cur: list[int] = []
+    prev = None
+    for r in rows:
+        if (prev is not None and r["sender"] == prev["sender"]
+                and _gap_seconds(prev["taken_at"], r["taken_at"]) <= config.BURST_SECONDS
+                and hamming(prev["phash"], r["phash"]) <= config.BURST_DISTANCE):
+            cur.append(r["id"])
+        else:
+            if len(cur) > 1:
+                groups.append(cur)
+            cur = [r["id"]]
+        prev = r
+    if len(cur) > 1:
+        groups.append(cur)
+    c.execute("BEGIN")
+    c.execute("UPDATE media SET burst=NULL WHERE burst IS NOT NULL")
+    c.executemany("UPDATE media SET burst=? WHERE id=?", [(min(g), i) for g in groups for i in g])
+    c.execute("COMMIT")
+    return len(groups)
+
+
 def _mtime_iso(mtime: float) -> str:
     return datetime.fromtimestamp(mtime).isoformat(timespec="seconds")
 
@@ -339,6 +440,14 @@ def run_pipeline() -> None:
         with ThreadPoolExecutor(config.WORKERS) as pool:
             list(pool.map(process_one, rows))
     detect_live_photos()
+
+    rows = c.execute(
+        "SELECT id FROM media WHERE kind='image' AND state='ready' AND hidden IS NULL AND sharp IS NULL").fetchall()
+    status.update(phase="looking for blurry shots and bursts", done=0, total=len(rows))
+    if rows:
+        with ThreadPoolExecutor(config.WORKERS) as pool:
+            list(pool.map(analyse_one, rows))
+    assign_bursts()
 
     if config.VIDEO_PREVIEWS:
         rows = c.execute(

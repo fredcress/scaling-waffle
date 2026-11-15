@@ -1,7 +1,7 @@
-# Paste into Dockge as a new stack. Replace OWNER/REPO with the GitHub repository.
+# Paste into Dockge as a new stack.
 services:
   wedding-triage:
-    image: ghcr.io/OWNER/REPO:latest
+    image: ghcr.io/fredcress/scaling-waffle:latest
     container_name: wedding-triage
     restart: unless-stopped
     ports:
@@ -14,6 +14,7 @@ services:
       # EXCLUDE: "Uncle Bob/*"              # folders to leave out, comma separated (RAW files are always ignored)
       # WORKERS: "2"                        # parallel thumbnail jobs
       # VIDEO_PREVIEWS: "0"                 # skip the 720p video copies (saves CPU, iPhone videos may not play everywhere)
+      # BLUR_BELOW: "45"                    # raise to flag more photos as blurry, lower to flag fewer
       # --- export to Immich (optional, can be added later) ---
       # IMMICH_URL: "http://192.168.1.10:2283"
       # IMMICH_API_KEY: "paste-key-here"

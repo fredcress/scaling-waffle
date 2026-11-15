@@ -122,6 +122,46 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(r["A/IMG_1.MOV"]["hidden"], "live")
         self.assertIsNone(r["A/IMG_2.MOV"]["hidden"])
 
+    def _ready_image(self, rel, taken, phash):
+        put(self.photos, rel, rel.encode() * 20)
+        indexer.scan()
+        db.conn().execute("UPDATE media SET state='ready', taken_at=?, phash=? WHERE relpath=?", (taken, phash, rel))
+
+    def test_bursts_group_lookalikes_taken_together(self):
+        self._ready_image("A/1.jpg", "2026-09-12T16:00:00", "ffff0000ffff0000")
+        self._ready_image("A/2.jpg", "2026-09-12T16:00:02", "ffff0000ffff0001")   # 1 bit off, 2 s later
+        self._ready_image("A/3.jpg", "2026-09-12T16:00:05", "ffff0000ffff0003")   # chains on from 2
+        self._ready_image("A/4.jpg", "2026-09-12T16:00:06", "0000ffff0000ffff")   # same moment, different picture
+        self._ready_image("A/5.jpg", "2026-09-12T17:00:00", "ffff0000ffff0000")   # same picture, an hour later
+        self._ready_image("B/6.jpg", "2026-09-12T16:00:01", "ffff0000ffff0000")   # same picture, another guest
+        self.assertEqual(indexer.assign_bursts(), 1)
+        r = rows()
+        first = r["A/1.jpg"]["id"]
+        self.assertEqual([r[f"A/{n}.jpg"]["burst"] for n in (1, 2, 3)], [first] * 3)
+        for rel in ("A/4.jpg", "A/5.jpg", "B/6.jpg"):
+            self.assertIsNone(r[rel]["burst"])
+        db.conn().execute("UPDATE media SET hidden='missing' WHERE relpath IN ('A/2.jpg', 'A/3.jpg')")
+        self.assertEqual(indexer.assign_bursts(), 0)   # regrouped from scratch every time
+        self.assertIsNone(rows()["A/1.jpg"]["burst"])
+
+    def test_quality_flags(self):
+        self.assertEqual(indexer.quality_flags(500, 120, 60), "")
+        self.assertEqual(indexer.quality_flags(5, 120, 60), "b")
+        self.assertEqual(indexer.quality_flags(5, 10, 3), "bdf")
+        self.assertEqual(indexer.quality_flags(500, 250, 60), "o")
+        self.assertEqual(indexer.quality_flags(None, None, None), "")
+        self.assertEqual(indexer.hamming("ffff0000ffff0000", "ffff0000ffff0003"), 2)
+
+    def test_bulk_rating_never_overwrites(self):
+        for n in (1, 2, 3):
+            put(self.photos, f"A/{n}.jpg", bytes([n]) * 300)
+        indexer.scan()
+        ids = [r["id"] for r in rows().values()]
+        db.set_rating(ids[0], "Wife", 4, True)
+        self.assertEqual(db.bulk_rate_unrated(ids, "Wife", 1), 2)
+        got = {r["media_id"]: (r["score"], r["star"]) for r in db.conn().execute("SELECT * FROM ratings")}
+        self.assertEqual(got, {ids[0]: (4, 1), ids[1]: (1, 0), ids[2]: (1, 0)})
+
 
 if __name__ == "__main__":
     unittest.main()

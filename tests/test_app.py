@@ -37,6 +37,19 @@ class AppTest(unittest.TestCase):
         exif[306] = "2026:09:12 16:30:00"
         im.save(os.path.join(photos, "Marie", "portrait.jpg"), exif=exif)
         Image.new("RGBA", (300, 300), (0, 120, 200, 128)).save(os.path.join(photos, "Paul", "logo.png"))
+        # Fine detail vs. the same picture blurred, and a two-shot burst.
+        noise = Image.frombytes("RGB", (400, 300), os.urandom(400 * 300 * 3))
+        noise.save(os.path.join(photos, "Marie", "sharp.jpg"), quality=95)
+        from PIL import ImageFilter
+
+        noise.filter(ImageFilter.GaussianBlur(12)).save(os.path.join(photos, "Marie", "blurry.jpg"), quality=95)
+        os.makedirs(os.path.join(photos, "Zoe"))
+        scene = Image.linear_gradient("L").rotate(30).convert("RGB")
+        scene.paste((255, 255, 255), (40, 60, 120, 200))
+        stamp = Image.Exif()
+        stamp[306] = "2026:09:12 18:00:00"
+        scene.save(os.path.join(photos, "Zoe", "burst1.jpg"), quality=92, exif=stamp)
+        scene.save(os.path.join(photos, "Zoe", "burst2.jpg"), quality=70, exif=stamp)
         with open(os.path.join(photos, "Paul", "broken.jpg"), "wb") as f:
             f.write(b"this is not a jpeg")
         try:
@@ -123,6 +136,24 @@ class AppTest(unittest.TestCase):
         self.assertEqual(post(id=mid, user="Stranger", score=3).status_code, 400)
         self.assertEqual(post(id=mid, user="Wife", score=6).status_code, 422)
         self.assertEqual(post(id=99999, user="Wife", score=3).status_code, 404)
+
+    def test_quality_and_bursts(self):
+        items, _ = self.items()
+        sharp, blurry, flat = items["sharp.jpg"], items["blurry.jpg"], items["portrait.jpg"]
+        self.assertGreater(sharp["sh"], blurry["sh"] * 5)
+        self.assertEqual(sharp["q"], "")
+        self.assertIn("b", blurry["q"])
+        self.assertIn("f", flat["q"])   # a single flat colour: no detail at all
+        b1, b2 = items["burst1.jpg"], items["burst2.jpg"]
+        self.assertIsNotNone(b1.get("b"))
+        self.assertEqual(b1["b"], b2.get("b"))
+        self.assertIsNone(sharp.get("b"))
+
+        r = self.client.post("/api/rate-bulk", json={"user": "Husband", "ids": [b1["id"], b2["id"]], "score": 1})
+        self.assertEqual(r.json()["rated"], 2)
+        r = self.client.post("/api/rate-bulk", json={"user": "Husband", "ids": [b1["id"], b2["id"]], "score": 1})
+        self.assertEqual(r.json()["rated"], 0)
+        self.assertEqual(self.client.post("/api/rate-bulk", json={"user": "X", "ids": [1], "score": 1}).status_code, 400)
 
     def test_static_config_and_export_guards(self):
         r = self.client.get("/")

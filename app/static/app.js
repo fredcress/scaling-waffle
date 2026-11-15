@@ -8,6 +8,7 @@ const S = {
   user: null,
   items: [],
   byId: new Map(),
+  bursts: new Map(),   // burst id -> its photos, in time order
   status: {},
   view: 'sort',
   mode: 'sort',      // what the viewer is doing: 'sort' (auto-advance) or 'browse' (lightbox)
@@ -49,6 +50,9 @@ const avg = (it) => { const s = scoresOf(it); return s.length ? s.reduce((a, b) 
 const anyStar = (it) => S.cfg.users.some((u) => (it.r[u] || [0, 0])[1]);
 const allRated = (it) => scoresOf(it).length === S.cfg.users.length;
 const current = () => S.byId.get(S.queue[S.pos]);
+const FLAG_TEXT = { b: 'looks blurry', d: 'very dark', o: 'overexposed', f: 'no detail' };
+const flagText = (it) => (it.q ? [...it.q].map((f) => FLAG_TEXT[f]).filter(Boolean).join(', ') : '');
+const burstOf = (it) => { const m = it && it.b != null ? S.bursts.get(it.b) : null; return m && m.length > 1 ? m : null; };
 
 function fmtDate(t) {
   if (!t) return '';
@@ -74,6 +78,13 @@ async function loadMedia() {
   const data = await api('/api/media');
   S.items = data.items;
   S.byId = new Map(S.items.map((it) => [it.id, it]));
+  S.bursts = new Map();
+  for (const it of S.items) {
+    if (it.b == null) continue;
+    if (!S.bursts.has(it.b)) S.bursts.set(it.b, []);
+    S.bursts.get(it.b).push(it);
+  }
+  for (const m of S.bursts.values()) m.sort((a, b) => (a.t || '').localeCompare(b.t || '') || a.id - b.id);
   S.status = data.status;
   updateChrome();
   fillSenders();
@@ -184,6 +195,7 @@ function show() {
     $('#v-info').textContent = '';
     $('#v-count').textContent = '';
     $('#v-others').textContent = '';
+    $('#v-info').classList.remove('warn');
     paintRating(null);
     return;
   }
@@ -200,7 +212,9 @@ function show() {
     img.src = `/preview/${it.id}`;
   }
   $('#v-sender').textContent = it.s;
-  $('#v-info').textContent = [fmtDate(it.t), it.k === 'v' ? `video ${fmtDur(it.d)}` : '', it.n].filter(Boolean).join(' · ');
+  const flags = flagText(it);
+  $('#v-info').textContent = [flags ? `⚠ ${flags}` : '', fmtDate(it.t), it.k === 'v' ? `video ${fmtDur(it.d)}` : '', it.n].filter(Boolean).join(' · ');
+  $('#v-info').classList.toggle('warn', !!flags);
   $('#v-count').textContent = `${S.pos + 1} / ${S.queue.length}`;
   paintRating(it);
 
@@ -228,6 +242,64 @@ function paintRating(it) {
     if (it.x) others += ' · already exported';
   }
   $('#v-others').textContent = others;
+  paintBurst(it);
+}
+
+function paintBurst(it) {
+  const el = $('#v-burst');
+  const members = burstOf(it);
+  if (!members) { el.hidden = true; el.innerHTML = ''; return; }
+  const sharpest = members.reduce((a, b) => ((b.sh || 0) > (a.sh || 0) ? b : a));
+  const unratedOthers = members.filter((m) => m !== it && !isRated(m)).length;
+  el.innerHTML = `<span>Burst of ${members.length}</span>` + members.map((m) => {
+    const score = mine(m)[0];
+    return `<button class="bthumb${m === it ? ' on' : ''}" data-id="${m.id}" title="${esc(m.n)}"><img src="/thumb/${m.id}" alt="">` +
+      (score != null ? `<span class="badge">${score}</span>` : '') +
+      (m === sharpest ? '<span class="sharpest">sharp</span>' : '') + '</button>';
+  }).join('') + (unratedOthers ? `<button id="v-best" title="Rates the ${unratedOthers} other unrated shots of this burst as 1 (B)">Keep only this one</button>` : '');
+  el.hidden = false;
+}
+
+function jumpTo(id) {
+  if (S.busy) return;
+  let i = S.queue.indexOf(id);
+  if (i < 0) { i = S.pos + 1; S.queue.splice(i, 0, id); }
+  S.pos = i;
+  show();
+}
+
+async function rateMany(items, score) {
+  // Only touches photos this person has not rated; undone locally if the save fails.
+  const todo = items.filter((m) => !isRated(m));
+  if (!todo.length) return 0;
+  todo.forEach((m) => { m.r[S.user] = [score, 0]; });
+  updateChrome();
+  try {
+    await api('/api/rate-bulk', { user: S.user, ids: todo.map((m) => m.id), score });
+  } catch (e) {
+    todo.forEach((m) => { delete m.r[S.user]; });
+    updateChrome();
+    toast(`Could not save: ${e.message}`);
+    return 0;
+  }
+  return todo.length;
+}
+
+async function bestOfBurst() {
+  const it = current();
+  const members = burstOf(it);
+  if (!members || S.busy) return;
+  const others = members.filter((m) => m !== it && !isRated(m));
+  if (!others.length) return;
+  const drop = new Set(others.map((m) => m.id));
+  const p = rateMany(others, 1);
+  if (S.mode === 'sort') {  // the rejected shots no longer need to come up
+    S.queue = S.queue.slice(0, S.pos + 1).concat(S.queue.slice(S.pos + 1).filter((id) => !drop.has(id)));
+    $('#v-count').textContent = `${S.pos + 1} / ${S.queue.length}`;
+  }
+  paintRating(it);
+  await p;
+  if (current() === it) paintRating(it);
 }
 
 async function setRating(it, score, star) {
@@ -311,6 +383,8 @@ const FILTERS = {
   agree: (it) => allRated(it) && scoresOf(it).every((s) => s >= 4),
   disagree: (it) => { const s = scoresOf(it); return s.length > 1 && Math.max(...s) - Math.min(...s) >= 2; },
   video: (it) => it.k === 'v',
+  junk: (it) => !!it.q,
+  burst: (it) => !!burstOf(it),
 };
 
 function tileHtml(it, idx) {
@@ -318,7 +392,8 @@ function tileHtml(it, idx) {
     const r = it.r[u];
     return r && r[0] != null ? `<span class="badge">${esc(u.slice(0, 1))} ${r[0]}</span>` : '';
   }).join('') + (anyStar(it) ? '<span class="badge star">★</span>' : '');
-  const corner = it.k === 'v' ? `<span class="corner badge">▶ ${fmtDur(it.d)}</span>` : '';
+  const corner = it.k === 'v' ? `<span class="corner badge">▶ ${fmtDur(it.d)}</span>`
+    : it.q ? `<span class="corner badge flag" title="${esc(flagText(it))}">⚠</span>` : '';
   return `<button class="tile" data-i="${idx}" title="${esc(it.s)}"><img loading="lazy" src="/thumb/${it.id}" alt="">${corner}<span class="badges">${badges}</span></button>`;
 }
 
@@ -332,7 +407,13 @@ function renderGrid(keepCount) {
     list.sort((a, b) => key(b) - key(a) || a.id - b.id);
   } else if (sort === 'time') {
     list.sort((a, b) => (a.t || '').localeCompare(b.t || '') || a.id - b.id);
+  } else if (sort === 'blur') {
+    const key = (it) => (it.sh == null ? Infinity : it.sh);
+    list.sort((a, b) => key(a) - key(b) || a.id - b.id);
   }
+  const rejectable = $('#browse-filter').value === 'junk' ? list.filter((it) => !isRated(it)).length : 0;
+  $('#bulk-reject').hidden = !rejectable;
+  $('#bulk-reject').textContent = `Rate the ${rejectable} I haven't rated as 1`;
   S.gridList = list;
   S.gridShown = Math.min(list.length, keepCount ? Math.max(S.gridShown, GRID_PAGE) : GRID_PAGE);
   $('#browse-count').textContent = `${list.length} item${list.length === 1 ? '' : 's'}`;
@@ -398,6 +479,9 @@ function renderExport() {
   if (st.pending) bits.push(`${st.pending} still being prepared`);
   if (st.duplicates) bits.push(`${st.duplicates} exact duplicates hidden`);
   if (st.live) bits.push(`${st.live} Live Photo clips hidden`);
+  const junk = S.items.filter((it) => it.q).length;
+  if (junk) bits.push(`${junk} flagged as possibly junk`);
+  if (S.bursts.size) bits.push(`${S.bursts.size} bursts`);
   if (st.raw_ignored) bits.push(`${st.raw_ignored} RAW files ignored`);
   if (st.missing) bits.push(`${st.missing} no longer on disk`);
   if (st.errors) bits.push(`${st.errors} could not be read`);
@@ -528,6 +612,7 @@ function wire() {
     const k = e.key;
     if (k >= '1' && k <= '5') rate(Number(k));
     else if (k === 's' || k === 'S' || k === '*') toggleStar();
+    else if (k === 'b' || k === 'B') bestOfBurst();
     else if (k === 'ArrowRight') next();
     else if (k === 'ArrowLeft' || k === 'z' || k === 'Z') back();
     else if (k === '0' || k === 'Backspace') clearRating();
@@ -538,6 +623,17 @@ function wire() {
   });
 
   for (const id of ['#browse-sender', '#browse-filter', '#browse-sort']) $(id).addEventListener('change', () => renderGrid(false));
+  $('#bulk-reject').addEventListener('click', async () => {
+    const todo = S.gridList.filter((it) => !isRated(it));
+    if (!todo.length || !confirm(`Give a 1 to these ${todo.length} photos? Have a scroll through first: anything you rescue with a real rating is left alone.`)) return;
+    await rateMany(todo, 1);
+    renderGrid(true);
+  });
+  $('#v-burst').addEventListener('click', (e) => {
+    if (e.target.closest('#v-best')) { bestOfBurst(); return; }
+    const b = e.target.closest('.bthumb');
+    if (b) jumpTo(Number(b.dataset.id));
+  });
   $('#grid').addEventListener('click', (e) => {
     const t = e.target.closest('.tile');
     if (t) openOverlay(S.gridList.map((it) => it.id), Number(t.dataset.i));

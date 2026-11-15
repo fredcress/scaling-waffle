@@ -33,6 +33,12 @@ class RateBody(BaseModel):
     star: bool = False
 
 
+class BulkRateBody(BaseModel):
+    user: str
+    ids: list[int]
+    score: int = Field(ge=1, le=5)
+
+
 class ExportBody(BaseModel):
     target: str
     ids: list[int]
@@ -75,8 +81,11 @@ def get_media(request: Request):
     for r in c.execute("SELECT media_id, user, score, star FROM ratings"):
         ratings.setdefault(r["media_id"], {})[r["user"]] = [r["score"], r["star"]]
     exported = {r["media_id"] for r in c.execute("SELECT DISTINCT media_id FROM exports")}
-    items = [
-        {
+    items = []
+    for r in c.execute(
+            "SELECT id, sender, kind, relpath, taken_at, duration, sharp, lum, contrast, burst FROM media "
+            "WHERE state='ready' AND hidden IS NULL ORDER BY sender COLLATE NOCASE, taken_at, relpath"):
+        it = {
             "id": r["id"],
             "s": r["sender"],
             "k": "v" if r["kind"] == "video" else "i",
@@ -86,10 +95,12 @@ def get_media(request: Request):
             "r": ratings.get(r["id"], {}),
             "x": 1 if r["id"] in exported else 0,
         }
-        for r in c.execute(
-            "SELECT id, sender, kind, relpath, taken_at, duration FROM media "
-            "WHERE state='ready' AND hidden IS NULL ORDER BY sender COLLATE NOCASE, taken_at, relpath")
-    ]
+        if r["sharp"] is not None and r["sharp"] >= 0:
+            it["sh"] = round(r["sharp"], 1)
+            it["q"] = indexer.quality_flags(r["sharp"], r["lum"], r["contrast"])
+        if r["burst"] is not None:
+            it["b"] = r["burst"]
+        items.append(it)
     body = json.dumps({"items": items, "status": _status()}, separators=(",", ":")).encode()
     headers = {"Cache-Control": "no-store"}
     if "gzip" in request.headers.get("accept-encoding", ""):
@@ -106,6 +117,14 @@ def rate(body: RateBody):
         raise HTTPException(404, "unknown photo")
     db.set_rating(body.id, body.user, body.score, body.star)
     return {"ok": True}
+
+
+@app.post("/api/rate-bulk")
+def rate_bulk(body: BulkRateBody):
+    """Rate many at once (reject a pile of blurry shots, or the rest of a burst). Never overwrites."""
+    if body.user not in config.USERS:
+        raise HTTPException(400, "unknown user")
+    return {"ok": True, "rated": db.bulk_rate_unrated(body.ids, body.user, body.score)}
 
 
 @app.post("/api/rescan")
