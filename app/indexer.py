@@ -23,7 +23,8 @@ LIVE_MAX_SECONDS = 3.5
 PREVIEW_PX = 2000
 THUMB_PX = 480
 
-status = {"phase": "idle", "done": 0, "total": 0, "raw_ignored": 0, "error": None, "last_scan": None}
+status = {"phase": "idle", "done": 0, "total": 0, "raw_ignored": 0, "error": None, "last_scan": None,
+          "found": 0, "problems": [], "uid": f"{os.getuid()}:{os.getgid()}"}
 _wake = threading.Event()
 _thread: threading.Thread | None = None
 
@@ -75,9 +76,14 @@ def scan() -> dict:
     seen: set[str] = set()
     new: list[tuple] = []
     raw = 0
+    problems: list[str] = []
+    if not os.path.isdir(root):
+        problems.append(f"{root} does not exist inside the container")
+    elif not os.access(root, os.R_OK | os.X_OK):
+        problems.append(f"{root}: permission denied")
     c.execute("BEGIN")
     try:
-        for dirpath, dirs, files in os.walk(root):
+        for dirpath, dirs, files in os.walk(root, onerror=lambda e: problems.append(f"{e.filename}: {e.strerror}")):
             dirs[:] = sorted(d for d in dirs if not d.startswith((".", "@")))
             for name in sorted(files):
                 if name.startswith("."):
@@ -102,7 +108,8 @@ def scan() -> dict:
                             c.execute("UPDATE media SET hidden=NULL WHERE id=?", (row["id"],))
                         continue
                     fp = fingerprint(full, st.st_size)
-                except OSError:
+                except OSError as e:
+                    problems.append(f"{rel}: {e.strerror}")
                     continue
                 seen.add(rel)
                 if row:  # same path, different content
@@ -153,6 +160,11 @@ def scan() -> dict:
         c.execute("ROLLBACK")
         raise
     status["raw_ignored"] = raw
+    status["found"] = len(seen)
+    status["problems"] = problems[:20]
+    if problems:
+        print(f"scan: {len(problems)} unreadable paths (running as uid:gid {status['uid']}), first: {problems[0]}", flush=True)
+    print(f"scan: {len(seen)} photos/videos found under {root}, {len(new)} new, {raw} RAW ignored", flush=True)
     status["last_scan"] = datetime.now().isoformat(timespec="seconds")
     return {"new": len(new), "raw_ignored": raw}
 

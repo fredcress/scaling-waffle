@@ -53,6 +53,16 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(r["loose.heic"]["sender"], "Unknown")
         self.assertEqual(indexer.status["raw_ignored"], 1)
 
+    def test_missing_folder_is_reported(self):
+        config.PHOTOS_DIR = os.path.join(self.tmp, "nope")
+        indexer.scan()
+        self.assertEqual(indexer.status["found"], 0)
+        self.assertIn("does not exist", indexer.status["problems"][0])
+        config.PHOTOS_DIR = self.photos
+        put(self.photos, "A/a.jpg", b"a" * 10)
+        indexer.scan()
+        self.assertEqual((indexer.status["found"], indexer.status["problems"]), (1, []))
+
     def test_exclude(self):
         config.EXCLUDE = ["Uncle"]
         put(self.photos, "Uncle/a.jpg", b"a" * 10)

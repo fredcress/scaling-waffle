@@ -106,6 +106,9 @@ function updateChrome() {
   } else if (st.error) {
     b.textContent = `Library scan failed: ${st.error}`;
     b.hidden = false;
+  } else if (st.problems && st.problems.length) {
+    b.textContent = `Some folders could not be read (app runs as ${st.uid}): ${st.problems[0]}`;
+    b.hidden = false;
   } else {
     b.hidden = true;
   }
@@ -160,13 +163,29 @@ function buildQueue() {
   show();
 }
 
+function noPhotosMessage() {
+  const st = S.status;
+  const who = st.uid ? ` The app runs as user:group ${esc(st.uid)}.` : '';
+  if (st.problems && st.problems.length) {
+    return `<div class="emoji">🔒</div><p><strong>The app cannot read the photo folder.</strong>${who}</p>` +
+      `<p class="muted">${st.problems.slice(0, 3).map(esc).join('<br>')}</p><p><button id="e-reload">Check again</button></p>`;
+  }
+  if (st.errors) {
+    return `<div class="emoji">⚠️</div><p>${st.found} files were found but none could be turned into a preview. The Results tab lists why.</p>`;
+  }
+  if (!st.found) {
+    return `<div class="emoji">📂</div><p><strong>The photo folder is empty as far as the app can see.</strong> The path on the NAS side of the mount is probably wrong (Docker creates an empty folder when it does not exist), or the guest folders are not readable.${who}</p><p><button id="e-reload">Check again</button></p>`;
+  }
+  return '<div class="emoji">⏳</div><p>Photos found, previews are on their way.</p><p><button id="e-reload">Check again</button></p>';
+}
+
 function emptyMessage() {
   if (S.mode !== 'sort') return '<p>Nothing here.</p>';
   if (!S.items.length) {
     const st = S.status;
     return st.phase && st.phase !== 'idle'
       ? '<div class="emoji">⏳</div><p>The photos are still being prepared. They will appear here shortly.</p><p><button id="e-reload">Check again</button></p>'
-      : '<div class="emoji">📂</div><p>No photos found yet. Check that the photo folder is mounted, then rescan from the Results tab.</p>';
+      : noPhotosMessage();
   }
   const leftAll = S.items.filter((it) => !isRated(it)).length;
   if (!leftAll) {
